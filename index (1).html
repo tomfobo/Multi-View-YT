@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Multi-vidéos</title>
+<style>
+:root{--bg:#f4f4f2;--card:#fff;--text:#1a1a1a;--muted:#6b6b6b;--accent:#d62828;--border:#d9d9d4}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1e1e1e;--text:#f0f0f0;--muted:#9a9a9a;--border:#333}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;flex-direction:column}
+header{display:flex;gap:10px;align-items:center;padding:10px 12px;flex-wrap:wrap}
+h1{font-size:16px;margin:0 auto 0 0}
+label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px}
+select{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px}
+input[type=range]{width:110px}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px;cursor:pointer}
+button.alt{background:var(--card);color:var(--text);border:1px solid var(--border)}
+#grid{flex:1;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(var(--cols,2),minmax(0,1fr));grid-auto-rows:var(--rowh,300px);grid-auto-flow:dense;gap:8px;padding:0 12px 12px}
+#grid.focus{grid-template-columns:minmax(0,1fr);grid-auto-rows:minmax(0,1fr)}
+#grid.focus .cell:not(.on){display:none}
+#grid.focus .cell.on{grid-column:1/-1!important;grid-row:1/-1!important}
+.cell{background:var(--card);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.bar{display:flex;gap:5px;padding:6px;flex-wrap:wrap}
+.bar input{flex:1 1 110px;min-width:0;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px}
+.bar button{padding:6px 9px;font-size:13px}
+.view{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px}
+iframe{width:100%;height:100%;border:0}
+.view.res{display:block;overflow:auto;padding:6px}
+.list{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.item{cursor:pointer;font-size:12px;line-height:1.3;color:var(--text)}
+.item img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;display:block;margin-bottom:3px}
+.item span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item:hover span{text-decoration:underline}
+body.clean header,body.clean .bar{display:none}
+body.clean #grid{padding:0;gap:2px;grid-auto-rows:minmax(0,1fr);overflow:hidden}
+body.clean .cell{border:0;border-radius:0}
+#tog{position:fixed;top:calc(4px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:10;padding:4px 12px;font-size:15px;border-radius:0 0 10px 10px;opacity:.9}
+body.clean #tog{opacity:.3;background:#000;color:#fff}
+body.clean #tog:hover{opacity:1}
+@media (max-width:700px){#grid{grid-template-columns:minmax(0,1fr)}.cell{grid-column:auto!important}}
+</style>
+</head>
+<body>
+<header>
+<h1>Multi-vidéos YouTube</h1>
+<label>Colonnes
+<select id="cols"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+</label>
+<label>Hauteur <input type="range" id="rowh" min="150" max="700" step="10" value="300"></label>
+<button class="alt" id="add">+ Ajouter</button>
+<button id="load">Tout lancer</button>
+<button class="alt" id="clear">Vider</button>
+<button class="alt" id="key" title="Clé API YouTube pour la recherche">🔑 Clé API</button>
+</header>
+<button id="tog" title="Masquer ou afficher les réglages (touche H)">⚙ Masquer</button>
+<main id="grid"></main>
+<script>
+const grid=document.getElementById('grid'),colsSel=document.getElementById('cols'),rowh=document.getElementById('rowh');
+const cells=[];
+const getKey=()=>{try{return localStorage.getItem('mv_key')||''}catch(e){return''}};
+const dec=s=>{const t=document.createElement('textarea');t.innerHTML=s;return t.value};
+const EMPTY='Colle un lien ou tape une recherche ci-dessus';
+
+function parse(u){
+  u=u.trim();
+  const emb=u.match(/src=["']([^"']+)["']/);
+  if(emb)u=emb[1].replace(/&amp;/g,'&');
+  if(u.startsWith('//'))u='https:'+u;
+  if(/^[\w-]{11}$/.test(u)&&/[A-Z0-9_-]/.test(u))return{v:u};
+  try{
+    const x=new URL(u);
+    const list=x.searchParams.get('list');
+    let v=x.searchParams.get('v');
+    if(x.hostname==='youtu.be')v=x.pathname.slice(1);
+    const m=x.pathname.match(/^\/(shorts|live|embed)\/([\w-]{11})/);
+    if(m)v=m[2];
+    if(v||list)return{v,list};
+  }catch(e){}
+  return null;
+}
+function src(p){
+  const q='autoplay=1&mute=1&rel=0&playsinline=1';
+  if(p.v)return'https://www.youtube-nocookie.com/embed/'+p.v+'?'+q+(p.list?'&list='+p.list:'');
+  return'https://www.youtube-nocookie.com/embed/videoseries?list='+p.list+'&'+q;
+}
+function save(){
+  try{localStorage.setItem('mv2',JSON.stringify({cols:colsSel.value,rowh:rowh.value,cells:cells.map(o=>({u:o.input.value,w:o.w,h:o.h}))}))}catch(e){}
+}
+function applyGrid(){
+  grid.style.setProperty('--cols',colsSel.value);
+  grid.style.setProperty('--rowh',rowh.value+'px');
+  cells.forEach(applySpan);
+}
+function applySpan(o){
+  o.c.style.gridColumn='span '+Math.min(o.w,+colsSel.value);
+  o.c.style.gridRow='span '+o.h;
+  o.wb.textContent='↔ '+o.w;
+  o.hb.textContent='↕ '+o.h;
+}
+function addCell(url,w,h,run){
+  const c=document.createElement('div');c.className='cell';
+  c.innerHTML='<div class="bar"><input placeholder="Lien, code intégrer ou recherche"><button>OK</button><button class="alt" title="Largeur (en colonnes)"></button><button class="alt" title="Hauteur (en lignes)"></button><button class="alt" title="Plein écran dans la page">⤢</button><button class="alt" title="Supprimer">✕</button></div><div class="view"></div>';
+  const input=c.querySelector('input'),view=c.querySelector('.view');
+  const [ok,wb,hb,zoom,del]=c.querySelectorAll('button');
+  view.textContent=EMPTY;
+  input.value=url||'';
+  const o={c,input,view,wb,hb,w:w||1,h:h||1};
+  o.run=()=>{
+    const p=parse(input.value);
+    if(!p){if(input.value.trim()){o.search();return}view.textContent=EMPTY;save();return}
+    view.innerHTML='';
+    view.className='view';
+    const f=document.createElement('iframe');
+    f.src=src(p);
+    f.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';
+    f.allowFullscreen=true;
+    f.referrerPolicy='strict-origin-when-cross-origin';
+    view.appendChild(f);
+    save();
+  };
+  o.search=async()=>{
+    const key=getKey();
+    view.className='view';
+    if(!key){view.textContent='Pour chercher, ajoute ta clé API avec le bouton 🔑 en haut';return}
+    view.textContent='Recherche…';
+    try{
+      const r=await fetch('https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=9&q='+encodeURIComponent(input.value.trim())+'&key='+encodeURIComponent(key));
+      const d=await r.json();
+      if(d.error){view.textContent='Erreur : '+d.error.message;return}
+      if(!d.items||!d.items.length){view.textContent='Aucun résultat';return}
+      const list=document.createElement('div');list.className='list';
+      d.items.forEach(it=>{
+        const b=document.createElement('div');b.className='item';
+        const im=document.createElement('img');im.src=it.snippet.thumbnails.medium.url;im.alt='';
+        const t=document.createElement('span');t.textContent=dec(it.snippet.title);
+        b.append(im,t);
+        b.onclick=()=>{input.value='https://youtu.be/'+it.id.videoId;o.run()};
+        list.appendChild(b);
+      });
+      view.className='view res';
+      view.innerHTML='';
+      view.appendChild(list);
+    }catch(e){view.textContent='Erreur réseau'}
+  };
+  ok.onclick=o.run;
+  input.onkeydown=e=>{if(e.key==='Enter')o.run()};
+  wb.onclick=()=>{o.w=o.w%4+1;applySpan(o);save()};
+  hb.onclick=()=>{o.h=o.h%3+1;applySpan(o);save()};
+  zoom.onclick=()=>{
+    const on=c.classList.toggle('on');
+    cells.forEach(x=>{if(x!==o)x.c.classList.remove('on')});
+    grid.classList.toggle('focus',on);
+  };
+  del.onclick=()=>{
+    c.remove();
+    cells.splice(cells.indexOf(o),1);
+    if(!cells.some(x=>x.c.classList.contains('on')))grid.classList.remove('focus');
+    save();
+  };
+  grid.appendChild(c);
+  cells.push(o);
+  applySpan(o);
+  if(run&&input.value)o.run();
+  return o;
+}
+colsSel.onchange=()=>{applyGrid();save()};
+rowh.oninput=()=>{applyGrid();save()};
+document.getElementById('add').onclick=()=>{addCell();save();grid.scrollTop=grid.scrollHeight};
+document.getElementById('load').onclick=()=>cells.forEach(o=>o.run());
+document.getElementById('clear').onclick=()=>{cells.forEach(o=>{o.input.value='';o.view.textContent=EMPTY});save()};
+
+document.getElementById('key').onclick=()=>{
+  const k=prompt('Colle ta clé API YouTube (elle reste dans ton navigateur) :',getKey());
+  if(k!==null){try{localStorage.setItem('mv_key',k.trim())}catch(e){}}
+};
+
+const tog=document.getElementById('tog');
+function toggleClean(){
+  const on=document.body.classList.toggle('clean');
+  tog.textContent=on?'⚙':'⚙ Masquer';
+}
+tog.onclick=toggleClean;
+document.addEventListener('keydown',e=>{
+  if((e.key==='h'||e.key==='H')&&!/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName))toggleClean();
+});
+
+let saved=null;
+try{saved=JSON.parse(localStorage.getItem('mv2'))}catch(e){}
+if(saved&&saved.cells&&saved.cells.length){
+  colsSel.value=saved.cols||'2';
+  rowh.value=saved.rowh||'300';
+  applyGrid();
+  saved.cells.forEach(s=>addCell(s.u,s.w,s.h,true));
+}else{
+  applyGrid();
+  for(let i=0;i<4;i++)addCell();
+}
+</script>
+</body>
+</html>
